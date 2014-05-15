@@ -32,7 +32,7 @@ struct target {
 	int		npkts;
 	char		res[NUM+1];
 
-	struct pcb	*pcb;
+	struct probe	*prb;
 	struct event	*ev_write;
 
 	int		row;
@@ -65,8 +65,8 @@ void report_cleanup(void);
 
 /* from icmp.c */
 void probe_setup();
-struct pcb *probe_new(const char *, void *);
-void probe_send(struct pcb *, int);
+struct probe *probe_new(const char *, void *);
+void probe_send(struct probe *, int);
 
 /* from dnstask.c */
 typedef void (*dnstask_cb_type)(int, void *, void *);
