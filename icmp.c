@@ -20,19 +20,28 @@
 #include <unistd.h>
 
 #include <event2/event.h>
-
 #include "xping.h"
 
 #define ICMP6_MINLEN sizeof(struct icmp6_hdr)
 
-struct target *hash = NULL;
+struct probe {
+	char		host[MAXHOST];
+	int		resolved;
+	union addr	sa;
+	struct probe	*duplicate;
+	UT_hash_handle	hh;
+	void		*owner;
+};
+
+struct probe *hash = NULL;
 char	outpacket[IP_MAXPACKET];
 char	outpacket6[IP_MAXPACKET];
 int	datalen = 56;
 int	ident;
 
-/* From the original ping.c by Mike Muus... */
 /*
+ * From the original ping.c by Mike Muus...
+ *
  * in_cksum --
  *      Checksum routine for Internet Protocol family headers (C Version)
  */
@@ -80,9 +89,9 @@ in_cksum(u_short *addr, int len)
  * key already exists.
  */
 void
-activate(struct target *t)
+activate(struct probe *t)
 {
-	struct target *result;
+	struct probe *result;
 
 	HASH_FIND(hh, hash, &t->sa, sizeof(union addr), result);
 	if (result == t)
@@ -100,15 +109,15 @@ activate(struct target *t)
  * one (t) instead.
  */
 void
-deactivate(struct target *t)
+deactivate(struct probe *t)
 {
-	struct target *tmp, *t1;
+	struct probe *tmp, *tmp2, *t1;
 
 	HASH_FIND(hh, hash, &t->sa, sizeof(union addr), tmp);
 	if (tmp == t) {
 		HASH_DELETE(hh, hash, t);
 		t1 = NULL;
-		DL_FOREACH(list, tmp) {
+		HASH_ITER(hh, hash, tmp, tmp2) {
 			if (tmp->duplicate == t) {
 				if (t1 == NULL) {
 					t1 = tmp;
@@ -125,10 +134,10 @@ deactivate(struct target *t)
 /*
  * Lookup target in the hash table
  */
-struct target *
+struct probe *
 find(int af, void *address)
 {
-	struct target *result;
+	struct probe *result;
 	union addr sa;
 
 	memset(&sa, 0, sizeof(sa));
@@ -195,11 +204,11 @@ write_packet6(struct sockaddr *sa, unsigned short seq)
 static void
 find_marktarget(int af, void *address, int seq, int ch)
 {
-	struct target *t;
+	struct probe *t;
 	t = find(af, address);
 	if (t == NULL)
 		return; /* unknown source address */
-	target_mark(t, seq, ch);
+	target_mark(t->owner, seq, ch);
 }
 
 /*
@@ -333,7 +342,7 @@ read_packet6(int fd, short what, void *thunk)
 static void
 resolved(int af, void *address, void *thunk)
 {
-	struct target *t = thunk;
+	struct probe *t = thunk;
 	if (af == AF_INET6) {
 		sin6(t)->sin6_family = AF_INET6;
 		memmove(&sin6(t)->sin6_addr, (struct in6_addr *)address,
@@ -350,7 +359,7 @@ resolved(int af, void *address, void *thunk)
 		t->resolved = 0;
 		deactivate(t);
 	}
-	target_resolved(t, af, address);
+	target_resolved(t->owner, af, address);
 }
 
 /*
@@ -392,22 +401,20 @@ probe_setup()
  * Allocate structure for a new target and insert into list of all
  * our targets.
  */
-struct target *
-probe_add(const char *line)
+struct probe *
+probe_new(const char *line, void *owner)
 {
 	union addr sa;
-	struct target *t;
+	struct probe *t;
 	int salen;
 
-	t = malloc(sizeof(*t));
+	t = calloc(1, sizeof(*t));
 	if (t == NULL) {
 		perror("malloc");
 		return (t);
 	}
-	memset(t, 0, sizeof(*t));
-	memset(t->res, ' ', sizeof(t->res));
+	t->owner = owner;
 	strncat(t->host, line, sizeof(t->host) - 1);
-	DL_APPEND(list, t);
 
 	salen = sizeof(sa);
 	if (evutil_parse_sockaddr_port(t->host, &sa.sa, &salen) == 0) {
@@ -434,10 +441,20 @@ probe_add(const char *line)
  * Send out a single probe for a target.
  */
 void
-probe_send(struct target *t, int seq)
+probe_send(struct probe *t, int seq)
 {
 	int len;
 	int n;
+
+	if (!t->resolved) {
+		target_mark(t->owner, seq, '@');
+		return;
+	}
+
+	if (t->duplicate) {
+		target_mark(t->owner, seq, '"'); /* transmit error */
+		return;
+	}
 
 	if (sa(t)->sa_family == AF_INET6) {
 		n = write_packet6(sa(t), seq & 0xffff);
@@ -446,11 +463,11 @@ probe_send(struct target *t, int seq)
 		n = write_packet4(sa(t), seq & 0xffff);
 		len = ICMP_MINLEN + datalen;
 	}
-	target_unmark(t, seq);
+	target_unmark(t->owner, seq);
 
 	if (n < 0) {
-		target_mark(t, seq, '!'); /* transmit error */
+		target_mark(t->owner, seq, '!'); /* transmit error */
 	} else if (n != len) {
-		target_mark(t, seq, '$'); /* partial transmit */
+		target_mark(t->owner, seq, '$'); /* partial transmit */
 	}
 }

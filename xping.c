@@ -80,19 +80,6 @@ target_probe(int fd, short what, void *thunk)
 		return;
 	}
 
-	/* Skip any duplicate targets */
-	if (t->duplicate != NULL) {
-		t->npkts++;
-		return;
-	}
-
-	/* Unresolved request */
-	if (!t->resolved) {
-		t->npkts++;
-		target_mark(t, t->npkts - 1, '@');
-		return;
-	}
-
 	/* Missed request */
 	if (t->npkts > 0 && GETRES(t, -1) != '.') {
 		if (GETRES(t, -1) == ' ')
@@ -108,7 +95,7 @@ target_probe(int fd, short what, void *thunk)
 	}
 
 	/* Transmit request */
-	probe_send(t, t->npkts);
+	probe_send(t->pcb, t->npkts);
 	t->npkts++;
 
 	ui_update(t);
@@ -178,8 +165,14 @@ target_add(const char *line)
 {
 	struct target *t;
 
-	t = probe_add(line);
+	t = (struct target *)calloc(1, sizeof(*t));
 	if (t == NULL)
+		return -1;
+	memset(t->res, ' ', sizeof(t->res));
+	strncat(t->host, line, sizeof(t->host) - 1);
+	DL_APPEND(list, t);
+	t->pcb = probe_new(line, t);
+	if (t->pcb == NULL)
 		return -1;
 	numtargets++;
 	return 0;

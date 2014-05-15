@@ -174,15 +174,11 @@ updatefull(int ifirst, int ilast)
 			    0x1b, t->host, 0x1b);
 		else
 			mvprintw(row, 0, "%19.19s ", t->host);
-		if (t->duplicate != NULL)
-			mvprintw(row, 20, "(duplicate of %s)", t->duplicate->host);
-		else {
-			for (i=ifirst; i<ilast; i++) {
-				if (i < t->npkts)
-					addch(t->res[i % NUM]);
-				else
-					addch(' ');
-			}
+		for (i=ifirst; i<ilast; i++) {
+			if (i < t->npkts)
+				addch(t->res[i % NUM]);
+			else
+				addch(' ');
 		}
 		move(++row, 0);
 	}
@@ -302,10 +298,10 @@ termio_cleanup(void)
 
 	endwin();
 	DL_FOREACH(list, t) {
-		if (C_flag && t->dnstask && sa(t)->sa_family == AF_INET6)
+		if (C_flag && t->af == AF_INET6)
 			fprintf(stdout, "%c[2;32m%19.19s%c[0m ",
 			    0x1b, t->host, 0x1b);
-		else if (C_flag && t->dnstask && sa(t)->sa_family == AF_INET)
+		else if (C_flag && t->af == AF_INET)
 			fprintf(stdout, "%c[2;31m%19.19s%c[0m ",
 			    0x1b, t->host, 0x1b);
 		else
